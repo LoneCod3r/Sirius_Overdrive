@@ -2914,6 +2914,107 @@ function drawMuteButton() {
   ctx.restore();
 }
 
+// ---------------------------------------------------------------------------
+// Fullscreen button (mobile browsers keep an address bar/nav bar that eats
+// into the playable area otherwise, with no other way to reclaim it)
+// ---------------------------------------------------------------------------
+
+// Recomputed every draw() call, same as muteButtonRect - drawn just to its
+// left so the two sit together as one control cluster in the corner.
+let fullscreenButtonRect = null;
+
+/**
+ * True if (x, y) - canvas coordinates from a tap/click - lands on the
+ * fullscreen button. Always false for a keyboard-triggered call (x/y
+ * undefined).
+ */
+function isFullscreenButtonHit(x, y) {
+  if (!fullscreenButtonRect || x === undefined || y === undefined) return false;
+  return x >= fullscreenButtonRect.x && x <= fullscreenButtonRect.x + fullscreenButtonRect.width
+    && y >= fullscreenButtonRect.y && y <= fullscreenButtonRect.y + fullscreenButtonRect.height;
+}
+
+/**
+ * Enters/exits fullscreen on the whole page (document.documentElement, not
+ * just the canvas - #nameInput and #rotateOverlay are siblings of the
+ * canvas, not descendants, so fullscreening only the canvas would hide
+ * them entirely while active). Vendor-prefixed fallbacks cover older/OEM
+ * mobile browsers; silently does nothing if the API is unavailable rather
+ * than throwing.
+ */
+function toggleFullscreen() {
+  const el = document.documentElement;
+  const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (!isFullscreen) {
+      const request = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (request) request.call(el).catch(() => {});
+    } else {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) exit.call(document).catch(() => {});
+    }
+  } catch (err) {
+    // Fullscreen is a nice-to-have, never worth crashing over.
+  }
+}
+
+/**
+ * Draws a small "expand/contract corners" icon just left of the mute
+ * button, tappable/clickable to toggle fullscreen - see
+ * isFullscreenButtonHit(), checked ahead of normal input handling in
+ * setupInput() and handlePrimaryAction().
+ */
+function drawFullscreenButton() {
+  const size = Math.round(canvas.width * 0.045);
+  const margin = canvas.width * 0.015;
+  const gap = canvas.width * 0.012;
+  const x = canvas.width - margin - size - gap - size;
+  const y = margin;
+  fullscreenButtonRect = { x, y, width: size, height: size };
+
+  const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 20, 30, 0.6)';
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, size, size, size * 0.2);
+  } else {
+    ctx.rect(x, y, size, size);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  // 4 corner brackets, pointing outward when not fullscreen (an "expand"
+  // hint) and inward when already fullscreen (a "contract" hint).
+  const pad = size * 0.24;
+  const armLen = size * 0.18;
+  const inset = isFullscreen ? armLen : 0;
+  const corners = [
+    { cx: x + pad, cy: y + pad, dx: 1, dy: 1 },
+    { cx: x + size - pad, cy: y + pad, dx: -1, dy: 1 },
+    { cx: x + pad, cy: y + size - pad, dx: 1, dy: -1 },
+    { cx: x + size - pad, cy: y + size - pad, dx: -1, dy: -1 },
+  ];
+
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = Math.max(1.5, size * 0.06);
+  ctx.lineCap = 'round';
+  for (const c of corners) {
+    const startX = c.cx + c.dx * inset;
+    const startY = c.cy + c.dy * inset;
+    ctx.beginPath();
+    ctx.moveTo(startX + c.dx * armLen, startY);
+    ctx.lineTo(startX, startY);
+    ctx.lineTo(startX, startY + c.dy * armLen);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 /**
  * Routes a "primary" input (tap or click - the menu screens have no
  * catch-all "click/tap anywhere" behavior anymore, only their actual
@@ -2922,11 +3023,16 @@ function drawMuteButton() {
  * tapped/clicked ship; PLAYING fires a laser; GAME_OVER/VICTORY return to
  * the main menu. (x, y) are canvas coordinates when available (a
  * click/tap) and undefined for a keyboard-triggered call (Spacebar). The
- * mute button (see isMuteButtonHit()) takes priority over all of that.
+ * mute and fullscreen buttons (see isMuteButtonHit()/isFullscreenButtonHit())
+ * take priority over all of that.
  */
 function handlePrimaryAction(x, y) {
   if (isMuteButtonHit(x, y)) {
     audioManager.toggleMute();
+    return;
+  }
+  if (isFullscreenButtonHit(x, y)) {
+    toggleFullscreen();
     return;
   }
 
@@ -3101,15 +3207,15 @@ function setupInput() {
     const touch = e.changedTouches[0];
     const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
 
-    // A touch that starts on the mute button is never treated as a
-    // gameplay drag: activeTouchId is left null, so the touchmove handler
-    // below (which moves the ship to wherever this same touch goes) never
-    // matches it and does nothing for the rest of this touch's lifetime -
-    // not just at this initial instant. Without this, even a sub-pixel
-    // wobble during the tap (touchmove fires for that too) would warp the
-    // ship straight to the button's corner, since touchmove had no such
-    // guard of its own.
-    if (isMuteButtonHit(x, y)) {
+    // A touch that starts on the mute or fullscreen button is never treated
+    // as a gameplay drag: activeTouchId is left null, so the touchmove
+    // handler below (which moves the ship to wherever this same touch
+    // goes) never matches it and does nothing for the rest of this touch's
+    // lifetime - not just at this initial instant. Without this, even a
+    // sub-pixel wobble during the tap (touchmove fires for that too) would
+    // warp the ship straight to the button's corner, since touchmove had
+    // no such guard of its own.
+    if (isMuteButtonHit(x, y) || isFullscreenButtonHit(x, y)) {
       handlePrimaryAction(x, y);
       return;
     }
@@ -3259,6 +3365,11 @@ function init() {
   ctx.imageSmoothingQuality = 'high';
 
   window.addEventListener('resize', resizeCanvas);
+  // Entering/exiting fullscreen changes the available viewport (and, on
+  // mobile, removes the address bar/nav bar that otherwise eats into it) -
+  // re-fit the canvas once the browser has actually applied the change.
+  document.addEventListener('fullscreenchange', resizeCanvas);
+  document.addEventListener('webkitfullscreenchange', resizeCanvas);
   // Some mobile browsers (reported: rotating out of the "rotate your
   // device" prompt on a Huawei P40 Lite never dismissed it) fire
   // 'orientationchange' before window.innerWidth/innerHeight have actually
@@ -3466,6 +3577,7 @@ function draw() {
 
   if (gameState !== 'LOADING') {
     drawMuteButton();
+    drawFullscreenButton();
   }
 }
 
