@@ -102,7 +102,7 @@ function check(label, condition) {
   // --- Mute silences sound effects, not just music -----------------------
   const muteResult = await page.evaluate(() => {
     let plays = 0;
-    const fakeSound = { cloneNode: () => ({ volume: 0, play: () => { plays++; return Promise.resolve(); } }) };
+    const fakeSound = { cloneNode: () => ({ volume: 0, play: () => { plays++; return Promise.resolve(); }, addEventListener: () => {} }) };
     audioManager.laserSound = fakeSound;
     audioManager.muted = false;
     audioManager.playLaserSound();

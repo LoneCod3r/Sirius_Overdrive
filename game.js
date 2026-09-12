@@ -482,10 +482,12 @@ const audioManager = {
       // Rebalanced so the background music always reads as the loudest
       // element - the laser fires far more often than anything else makes
       // noise, so even a moderate per-shot volume added up to drowning out
-      // the music during any sustained firing.
+      // the music during any sustained firing. Lowered again after
+      // feedback that 0.2 was still too loud, especially under MACHINE_GUN's
+      // fast 0.08s cooldown where shots overlap heavily.
       this.laserSound = new Audio(this.LASER_URL);
       this.laserSound.preload = 'auto';
-      this.laserSound.volume = 0.2;
+      this.laserSound.volume = 0.1;
 
       this.explosionSound = new Audio(this.EXPLOSION_URL);
       this.explosionSound.preload = 'auto';
@@ -503,6 +505,14 @@ const audioManager = {
     }
   },
 
+  // Every currently-playing one-shot clone (see _playOneShot) - tracked so
+  // pausing/muting can actually silence sounds already in flight, not just
+  // block new ones. Rapid fire (MACHINE_GUN's 0.08s cooldown especially)
+  // can have several overlapping laser clips in flight at once; without
+  // this, pausing mid-burst left them audibly playing out on their own for
+  // a beat after the game had visibly frozen.
+  activeOneShots: [],
+
   /**
    * Plays a one-shot sound effect. Clones the node so rapid, overlapping
    * shots/explosions each play in full instead of cutting each other off.
@@ -512,6 +522,11 @@ const audioManager = {
     try {
       const instance = sound.cloneNode(true);
       instance.volume = sound.volume;
+      this.activeOneShots.push(instance);
+      instance.addEventListener('ended', () => {
+        const i = this.activeOneShots.indexOf(instance);
+        if (i !== -1) this.activeOneShots.splice(i, 1);
+      });
       instance.play().catch(() => {});
     } catch (err) {
       try {
@@ -521,6 +536,23 @@ const audioManager = {
         // Missing/blocked audio - fail silently.
       }
     }
+  },
+
+  /**
+   * Silences every one-shot sound currently in flight (a shot/explosion
+   * mid-playback) - called when pausing or muting, so freezing the game
+   * actually freezes its sound too instead of letting recent clips finish
+   * on their own.
+   */
+  stopAllOneShots() {
+    for (const instance of this.activeOneShots) {
+      try {
+        instance.pause();
+      } catch (err) {
+        // Ignore - best effort.
+      }
+    }
+    this.activeOneShots.length = 0;
   },
 
   playLaserSound() {
@@ -550,6 +582,9 @@ const audioManager = {
    */
   toggleMute() {
     this.muted = !this.muted;
+    if (this.muted) {
+      this.stopAllOneShots();
+    }
     if (!this.music) return;
     try {
       if (this.muted) {
@@ -2797,11 +2832,15 @@ function startGame() {
 /**
  * Toggles between 'PLAYING' and 'PAUSED' (bound to the 'P' key). A no-op
  * from any other state (menu, game over). Pauses/resumes the background
- * music track in lockstep with the game state.
+ * music track in lockstep with the game state, and silences any laser/
+ * explosion sound effects already in flight (they otherwise kept playing
+ * out on their own for a beat after the game had visibly frozen, since
+ * update()'s early PAUSED return only stops NEW ones from starting).
  */
 function togglePause() {
   if (gameState === 'PLAYING') {
     gameState = 'PAUSED';
+    audioManager.stopAllOneShots();
     if (audioManager.music) {
       audioManager.music.pause();
     }
