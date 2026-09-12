@@ -28,9 +28,10 @@ let totalElapsedTime = 0;
 // the browsable ship codex; 'SHIP_SELECTION' lets the player pick a ship
 // before their first launch;
 // Clicking START on the title screen goes to 'ENTER_NAME' first (see
-// startNameEntry()), where the player dials in a 3-letter callsign, before
-// landing on 'SHIP_SELECTION'; that name is then reused automatically for
-// any top-5 leaderboard entry the run earns, with no further prompting.
+// startNameEntry()), where the player types a name (up to NAME_MAX_LENGTH
+// characters) before landing on 'SHIP_SELECTION'; that name is then reused
+// automatically for any top-5 leaderboard entry the run earns, with no
+// further prompting.
 // 'PLAYING' runs the full simulation; 'PAUSED' freezes everything (including
 // the starfield) until resumed; 'GAME_OVER' and 'VICTORY' freeze gameplay,
 // show their respective overlay (a congratulations message for VICTORY,
@@ -52,7 +53,8 @@ function randomRange(min, max) {
 
 const HIGH_SCORE_STORAGE_KEY = 'nebulaVanguardHighScores';
 const HIGH_SCORE_COUNT = 5;
-const DEFAULT_HIGH_SCORE_NAME = 'AAA';
+const DEFAULT_HIGH_SCORE_NAME = 'PLAYER';
+const NAME_MAX_LENGTH = 10;
 
 /**
  * Reads the top scores from localStorage as { name, score } entries.
@@ -71,7 +73,7 @@ function loadHighScores() {
           return { name: DEFAULT_HIGH_SCORE_NAME, score: value };
         }
         if (value && typeof value.score === 'number' && Number.isFinite(value.score)) {
-          const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, 3).toUpperCase() : DEFAULT_HIGH_SCORE_NAME;
+          const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, NAME_MAX_LENGTH).toUpperCase() : DEFAULT_HIGH_SCORE_NAME;
           return { name, score: value.score };
         }
         return null;
@@ -115,14 +117,17 @@ function saveHighScore(entry) {
 // Player name entry ('ENTER_NAME' game state)
 // ---------------------------------------------------------------------------
 
-// The callsign entered before ship selection; reused automatically for any
+// The name entered before ship selection; reused automatically for any
 // leaderboard entry a run earns, with no further prompting mid-game.
 let playerName = DEFAULT_HIGH_SCORE_NAME;
 
-// The 3 letters the player is currently dialing in, cycled with Up/Down or
-// typed directly; nameEntrySlotIndex is which of the 3 is currently active.
-let nameEntryLetters = ['A', 'A', 'A'];
-let nameEntrySlotIndex = 0;
+// Live text of the in-progress name entry (up to NAME_MAX_LENGTH chars),
+// mirrored from the real <input id="nameInput"> element - see setupInput().
+// That hidden-but-focusable input is what actually captures keystrokes (and
+// what pops the OS keyboard on mobile); this variable is just what
+// drawNameEntryScreen() renders onto the canvas.
+let nameEntryText = '';
+let nameInputEl = null;
 
 // Which state to land on once the name is confirmed (always 'SHIP_SELECTION'
 // today, kept as a variable rather than a hardcoded jump so name entry stays
@@ -131,31 +136,31 @@ let pendingFinalState = null;
 
 /**
  * Shows the name entry overlay, pre-filled with the player's last-entered
- * callsign (or "AAA" the first time), and records which state to land on
- * once they confirm.
+ * name (or "PLAYER" the first time), and focuses the real text input so
+ * keystrokes (and, on mobile, the OS keyboard) go straight to it.
  */
 function startNameEntry(nextState) {
-  nameEntryLetters = playerName.padEnd(3, 'A').slice(0, 3).split('');
-  nameEntrySlotIndex = 0;
+  nameEntryText = playerName;
   pendingFinalState = nextState;
   gameState = 'ENTER_NAME';
+  if (nameInputEl) {
+    nameInputEl.value = nameEntryText;
+    nameInputEl.focus();
+    nameInputEl.select();
+  }
 }
 
 /**
- * Cycles one letter slot up or down through A-Z, wrapping at both ends.
- */
-function cycleNameEntryLetter(slotIndex, direction) {
-  const code = nameEntryLetters[slotIndex].charCodeAt(0) - 65;
-  const next = (code + direction + 26) % 26;
-  nameEntryLetters[slotIndex] = String.fromCharCode(65 + next);
-}
-
-/**
- * Saves the dialed-in 3-letter callsign as the current player name and
- * lands on whichever state (SHIP_SELECTION) triggered name entry.
+ * Saves the typed name (falling back to the default if left empty) as the
+ * current player name and lands on whichever state (SHIP_SELECTION)
+ * triggered name entry.
  */
 function confirmNameEntry() {
-  playerName = nameEntryLetters.join('');
+  const typed = (nameInputEl ? nameInputEl.value : nameEntryText).trim().toUpperCase().slice(0, NAME_MAX_LENGTH);
+  playerName = typed || DEFAULT_HIGH_SCORE_NAME;
+  if (nameInputEl) {
+    nameInputEl.blur();
+  }
   gameState = pendingFinalState;
   pendingFinalState = null;
 }
@@ -2827,18 +2832,13 @@ function handlePrimaryAction(x, y) {
     }
   } else if (gameState === 'ENTER_NAME') {
     const action = getButtonAt(activeMenuButtons, x, y);
-    if (action && action.startsWith('LETTER_UP_')) {
-      const idx = Number(action.slice('LETTER_UP_'.length));
-      cycleNameEntryLetter(idx, 1);
-      nameEntrySlotIndex = idx;
-    } else if (action && action.startsWith('LETTER_DOWN_')) {
-      const idx = Number(action.slice('LETTER_DOWN_'.length));
-      cycleNameEntryLetter(idx, -1);
-      nameEntrySlotIndex = idx;
-    } else if (action && action.startsWith('LETTER_SELECT_')) {
-      nameEntrySlotIndex = Number(action.slice('LETTER_SELECT_'.length));
-    } else if (action === 'CONFIRM') {
+    if (action === 'CONFIRM') {
       confirmNameEntry();
+    } else if (nameInputEl) {
+      // Tapping anywhere else on the overlay (the text field itself, or just
+      // the background) re-focuses the input - needed on mobile, where the
+      // OS keyboard/focus can be dismissed by a tap outside it.
+      nameInputEl.focus();
     }
   } else if (gameState === 'GAME_OVER' || gameState === 'VICTORY') {
     gameState = 'START_MENU';
@@ -2870,6 +2870,33 @@ function getCanvasCoordinates(clientX, clientY) {
  * primary action (start/fire/restart).
  */
 function setupInput() {
+  nameInputEl = document.getElementById('nameInput');
+
+  // The name field itself: sanitizes on every keystroke (uppercase,
+  // NAME_MAX_LENGTH cap, letters/digits/space only) so what's on screen
+  // always matches what confirmNameEntry() will actually save, and confirms
+  // on Enter (including a mobile keyboard's "Go"/"Done" action, which also
+  // fires a regular 'Enter' keydown).
+  if (nameInputEl) {
+    nameInputEl.addEventListener('input', () => {
+      const sanitized = nameInputEl.value.toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, NAME_MAX_LENGTH);
+      nameInputEl.value = sanitized;
+      nameEntryText = sanitized;
+    });
+    nameInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // Without this, the same Enter keystroke would go on to bubble up
+        // to the window keydown handler below - which, by then, would see
+        // the already-updated gameState (e.g. 'SHIP_SELECTION') and act on
+        // it too, so one Enter press would confirm the name AND immediately
+        // confirm ship selection.
+        e.stopPropagation();
+        confirmNameEntry();
+      }
+    });
+  }
+
   window.addEventListener('keydown', (e) => {
     // Ship selection has its own dedicated arrow-key/confirm handling,
     // separate from in-flight movement, so it doesn't touch keysPressed.
@@ -2887,35 +2914,11 @@ function setupInput() {
       return;
     }
 
-    // The high-score name entry overlay dials in 3 letters, independent of
-    // in-flight movement handling below: typing A-Z sets the active slot
-    // and advances, Up/Down cycles a letter, Left/Right moves the active
-    // slot, and Enter/Space confirms.
+    // Name entry is handled entirely by the real #nameInput element (see
+    // its own listeners below) - typed keystrokes go there, not here, since
+    // it's focused for the whole 'ENTER_NAME' state. Just don't let this
+    // handler's movement/Space/P shortcuts fire underneath it.
     if (gameState === 'ENTER_NAME') {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        cycleNameEntryLetter(nameEntrySlotIndex, 1);
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        cycleNameEntryLetter(nameEntrySlotIndex, -1);
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        nameEntrySlotIndex = (nameEntrySlotIndex - 1 + 3) % 3;
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        nameEntrySlotIndex = (nameEntrySlotIndex + 1) % 3;
-      } else if (e.key === 'Backspace') {
-        e.preventDefault();
-        nameEntrySlotIndex = (nameEntrySlotIndex - 1 + 3) % 3;
-        nameEntryLetters[nameEntrySlotIndex] = 'A';
-      } else if (/^[a-zA-Z]$/.test(e.key)) {
-        e.preventDefault();
-        nameEntryLetters[nameEntrySlotIndex] = e.key.toUpperCase();
-        nameEntrySlotIndex = (nameEntrySlotIndex + 1) % 3;
-      } else if (e.code === 'Space' || e.key === ' ' || e.key === 'Enter') {
-        e.preventDefault();
-        confirmNameEntry();
-      }
       return;
     }
 
@@ -4101,12 +4104,12 @@ function drawAboutScreen() {
 }
 
 /**
- * Renders the pilot callsign entry overlay shown right after START, before
- * ship selection: 3 letter dials (tap/click their arrows, or use the
- * keyboard - Left/Right to move slots, Up/Down or typing A-Z to change a
- * letter) and a CONFIRM button that saves the name via confirmNameEntry()
- * and proceeds to SHIP_SELECTION. This name is then reused automatically for
- * any top-5 leaderboard entry the run earns.
+ * Renders the classic-arcade "ENTER YOUR NAME" overlay shown right after
+ * START, before ship selection: a single typed line (up to NAME_MAX_LENGTH
+ * characters, real keystrokes via the focused #nameInput element - see
+ * setupInput()) with a blinking cursor, and a CONFIRM button/Enter key that
+ * saves it via confirmNameEntry() and proceeds to SHIP_SELECTION. This name
+ * is then reused automatically for any top-5 leaderboard entry the run earns.
  */
 function drawNameEntryScreen() {
   activeMenuButtons = [];
@@ -4121,66 +4124,43 @@ function drawNameEntryScreen() {
   ctx.fillStyle = '#ffd700';
   ctx.shadowColor = '#ffae00';
   ctx.shadowBlur = 24;
-  ctx.font = `bold ${Math.round(canvas.width * 0.032)}px 'Orbitron', monospace`;
-  ctx.fillText('PILOT IDENTIFICATION', canvas.width / 2, canvas.height * 0.3);
+  ctx.font = `bold ${Math.round(canvas.width * 0.036)}px 'Orbitron', monospace`;
+  ctx.fillText('ENTER YOUR NAME', canvas.width / 2, canvas.height * 0.36);
   ctx.shadowBlur = 0;
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = `${Math.round(canvas.width * 0.016)}px 'Orbitron', monospace`;
-  ctx.fillText('ENTER YOUR CALLSIGN', canvas.width / 2, canvas.height * 0.4);
+  // A classic blinking text cursor, ~2Hz.
+  const cursorOn = Math.floor(totalElapsedTime * 2) % 2 === 0;
+  const displayText = nameEntryText + (cursorOn ? '_' : ' ');
 
-  const boxSize = canvas.width * 0.09;
-  const gap = canvas.width * 0.03;
-  const totalWidth = boxSize * 3 + gap * 2;
-  const startX = canvas.width / 2 - totalWidth / 2;
-  const boxY = canvas.height * 0.53;
-  const arrowSize = boxSize * 0.5;
-  const arrowGap = canvas.height * 0.07;
+  ctx.fillStyle = '#00e5ff';
+  ctx.shadowColor = '#00e5ff';
+  ctx.shadowBlur = 12;
+  ctx.font = `bold ${Math.round(canvas.width * 0.045)}px 'Orbitron', monospace`;
+  ctx.fillText(displayText, canvas.width / 2, canvas.height * 0.48);
+  ctx.shadowBlur = 0;
 
-  for (let i = 0; i < 3; i++) {
-    const x = startX + i * (boxSize + gap);
-    const isActive = i === nameEntrySlotIndex;
+  const lineWidth = canvas.width * 0.4;
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2 - lineWidth / 2, canvas.height * 0.53);
+  ctx.lineTo(canvas.width / 2 + lineWidth / 2, canvas.height * 0.53);
+  ctx.stroke();
 
-    const upY = boxY - arrowGap;
-    drawMenuButton(x + boxSize / 2 - arrowSize / 2, upY - arrowSize / 2, arrowSize, arrowSize, '▲', {
-      fillStyle: 'rgba(0, 20, 30, 0.4)',
-      font: `bold ${Math.round(arrowSize * 0.55)}px 'Orbitron', monospace`,
-    });
-    activeMenuButtons.push({ x: x + boxSize / 2 - arrowSize / 2, y: upY - arrowSize / 2, width: arrowSize, height: arrowSize, action: `LETTER_UP_${i}` });
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.font = `${Math.round(canvas.width * 0.014)}px 'Orbitron', monospace`;
+  ctx.fillText(`UP TO ${NAME_MAX_LENGTH} CHARACTERS`, canvas.width / 2, canvas.height * 0.6);
 
-    ctx.save();
-    ctx.fillStyle = isActive ? 'rgba(0, 229, 255, 0.25)' : 'rgba(0, 20, 30, 0.55)';
-    ctx.strokeStyle = isActive ? '#00e5ff' : 'rgba(0, 229, 255, 0.4)';
-    ctx.lineWidth = isActive ? 4 : 2;
-    ctx.shadowColor = '#00e5ff';
-    ctx.shadowBlur = isActive ? 16 : 0;
-    ctx.fillRect(x, boxY, boxSize, boxSize);
-    ctx.strokeRect(x, boxY, boxSize, boxSize);
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold ${Math.round(boxSize * 0.55)}px 'Orbitron', monospace`;
-    ctx.fillText(nameEntryLetters[i], x + boxSize / 2, boxY + boxSize / 2);
-    ctx.restore();
-    activeMenuButtons.push({ x, y: boxY, width: boxSize, height: boxSize, action: `LETTER_SELECT_${i}` });
-
-    const downY = boxY + boxSize + arrowGap;
-    drawMenuButton(x + boxSize / 2 - arrowSize / 2, downY - arrowSize / 2, arrowSize, arrowSize, '▼', {
-      fillStyle: 'rgba(0, 20, 30, 0.4)',
-      font: `bold ${Math.round(arrowSize * 0.55)}px 'Orbitron', monospace`,
-    });
-    activeMenuButtons.push({ x: x + boxSize / 2 - arrowSize / 2, y: downY - arrowSize / 2, width: arrowSize, height: arrowSize, action: `LETTER_DOWN_${i}` });
-  }
-
-  const btnWidth = canvas.width * 0.2;
+  const btnWidth = canvas.width * 0.22;
   const btnHeight = canvas.height * 0.08;
   const btnX = canvas.width / 2 - btnWidth / 2;
-  const btnY = canvas.height * 0.82;
+  const btnY = canvas.height * 0.72;
   drawMenuButton(btnX, btnY, btnWidth, btnHeight, 'CONFIRM', { fillStyle: 'rgba(0, 60, 20, 0.6)', strokeStyle: '#4dff9e', shadowColor: '#4dff9e' });
   activeMenuButtons.push({ x: btnX, y: btnY, width: btnWidth, height: btnHeight, action: 'CONFIRM' });
 
-  ctx.font = `${Math.round(canvas.width * 0.013)}px 'Orbitron', monospace`;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-  ctx.fillText('Type letters or use Arrow Keys - Enter to Confirm', canvas.width / 2, canvas.height * 0.93);
+  ctx.font = `${Math.round(canvas.width * 0.012)}px 'Orbitron', monospace`;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.fillText('Press ENTER to Confirm', canvas.width / 2, canvas.height * 0.84);
 
   ctx.restore();
 }

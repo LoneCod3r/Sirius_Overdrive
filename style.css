@@ -24,6 +24,20 @@ body {
   display: block;
 }
 
+/* Invisible but real/focusable text input that game.js focuses while
+   gameState is 'ENTER_NAME' - this is what makes the name typeable on
+   mobile (focusing it pops the OS's own keyboard) as well as desktop.
+   The canvas draws the name itself; this element is never seen. */
+#nameInput {
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  border: none;
+}
+
 /* Shown (via game.js, toggling the [hidden] attribute) on touch devices
    held in portrait - this is a landscape-oriented shooter, and letting the
    canvas just letterbox down to a thin strip in portrait is unplayable. */
