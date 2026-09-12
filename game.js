@@ -3099,14 +3099,24 @@ function setupInput() {
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
     const touch = e.changedTouches[0];
-    activeTouchId = touch.identifier;
     const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
 
-    // Tapping the mute button must not also warp the ship to that corner
-    // (the PLAYING move-to-touch below would otherwise fire unconditionally
-    // for any tap) - handlePrimaryAction() below still handles the actual
-    // toggle, this only guards the movement side effect.
-    if (gameState === 'PLAYING' && !isMuteButtonHit(x, y)) {
+    // A touch that starts on the mute button is never treated as a
+    // gameplay drag: activeTouchId is left null, so the touchmove handler
+    // below (which moves the ship to wherever this same touch goes) never
+    // matches it and does nothing for the rest of this touch's lifetime -
+    // not just at this initial instant. Without this, even a sub-pixel
+    // wobble during the tap (touchmove fires for that too) would warp the
+    // ship straight to the button's corner, since touchmove had no such
+    // guard of its own.
+    if (isMuteButtonHit(x, y)) {
+      handlePrimaryAction(x, y);
+      return;
+    }
+
+    activeTouchId = touch.identifier;
+
+    if (gameState === 'PLAYING') {
       player.x = x - player.width / 2;
       player.y = y - player.height / 2;
       clampPlayerToBounds();
