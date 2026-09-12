@@ -53,7 +53,7 @@ function randomRange(min, max) {
 
 const HIGH_SCORE_STORAGE_KEY = 'nebulaVanguardHighScores';
 const HIGH_SCORE_COUNT = 5;
-const DEFAULT_HIGH_SCORE_NAME = 'PLAYER';
+const DEFAULT_HIGH_SCORE_NAME = 'Player';
 const NAME_MAX_LENGTH = 10;
 
 /**
@@ -73,7 +73,7 @@ function loadHighScores() {
           return { name: DEFAULT_HIGH_SCORE_NAME, score: value };
         }
         if (value && typeof value.score === 'number' && Number.isFinite(value.score)) {
-          const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, NAME_MAX_LENGTH).toUpperCase() : DEFAULT_HIGH_SCORE_NAME;
+          const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, NAME_MAX_LENGTH) : DEFAULT_HIGH_SCORE_NAME;
           return { name, score: value.score };
         }
         return null;
@@ -135,8 +135,21 @@ let nameInputEl = null;
 let pendingFinalState = null;
 
 /**
+ * Filters raw input down to letters/digits/spaces, caps it at
+ * NAME_MAX_LENGTH, and force-capitalizes only the first character - every
+ * other letter keeps whatever case was actually typed (lowercase by
+ * default, uppercase wherever the player held Shift), like a normal name
+ * field rather than an all-caps arcade one.
+ */
+function sanitizeNameInput(raw) {
+  const filtered = raw.replace(/[^A-Za-z0-9 ]/g, '').slice(0, NAME_MAX_LENGTH);
+  if (!filtered) return filtered;
+  return filtered.charAt(0).toUpperCase() + filtered.slice(1);
+}
+
+/**
  * Shows the name entry overlay, pre-filled with the player's last-entered
- * name (or "PLAYER" the first time), and focuses the real text input so
+ * name (or "Player" the first time), and focuses the real text input so
  * keystrokes (and, on mobile, the OS keyboard) go straight to it.
  */
 function startNameEntry(nextState) {
@@ -156,7 +169,7 @@ function startNameEntry(nextState) {
  * triggered name entry.
  */
 function confirmNameEntry() {
-  const typed = (nameInputEl ? nameInputEl.value : nameEntryText).trim().toUpperCase().slice(0, NAME_MAX_LENGTH);
+  const typed = sanitizeNameInput((nameInputEl ? nameInputEl.value : nameEntryText).trim());
   playerName = typed || DEFAULT_HIGH_SCORE_NAME;
   if (nameInputEl) {
     nameInputEl.blur();
@@ -2879,7 +2892,7 @@ function setupInput() {
   // fires a regular 'Enter' keydown).
   if (nameInputEl) {
     nameInputEl.addEventListener('input', () => {
-      const sanitized = nameInputEl.value.toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, NAME_MAX_LENGTH);
+      const sanitized = sanitizeNameInput(nameInputEl.value);
       nameInputEl.value = sanitized;
       nameEntryText = sanitized;
     });
