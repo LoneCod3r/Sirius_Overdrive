@@ -31,7 +31,10 @@ let totalElapsedTime = 0;
 // the starfield) until resumed; 'GAME_OVER' and 'VICTORY' freeze gameplay,
 // show their respective overlay (a congratulations message for VICTORY,
 // after the final boss - the last entry in BOSS_SEQUENCE - is defeated), and
-// return to START_MENU (not an automatic restart) on the next input.
+// return to START_MENU (not an automatic restart) on the next input. If the
+// final score qualifies for the top-5 leaderboard, 'ENTER_NAME' is shown
+// first (see startNameEntry()) so the player can dial in a 3-letter name
+// before landing on GAME_OVER/VICTORY.
 let gameState = 'LOADING';
 let score = 0;
 
@@ -48,10 +51,13 @@ function randomRange(min, max) {
 
 const HIGH_SCORE_STORAGE_KEY = 'nebulaVanguardHighScores';
 const HIGH_SCORE_COUNT = 5;
+const DEFAULT_HIGH_SCORE_NAME = 'AAA';
 
 /**
- * Reads the top scores from localStorage. Defensive against a missing key,
- * corrupted JSON, or an environment where localStorage is unavailable.
+ * Reads the top scores from localStorage as { name, score } entries.
+ * Defensive against a missing key, corrupted JSON, or an environment where
+ * localStorage is unavailable. Also migrates the older format (a bare array
+ * of numbers, from before named entries existed) into named entries.
  */
 function loadHighScores() {
   try {
@@ -59,8 +65,18 @@ function loadHighScores() {
     const parsed = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((value) => typeof value === 'number' && Number.isFinite(value))
-      .sort((a, b) => b - a)
+      .map((value) => {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          return { name: DEFAULT_HIGH_SCORE_NAME, score: value };
+        }
+        if (value && typeof value.score === 'number' && Number.isFinite(value.score)) {
+          const name = typeof value.name === 'string' && value.name.trim() ? value.name.trim().slice(0, 3).toUpperCase() : DEFAULT_HIGH_SCORE_NAME;
+          return { name, score: value.score };
+        }
+        return null;
+      })
+      .filter((entry) => entry !== null)
+      .sort((a, b) => b.score - a.score)
       .slice(0, HIGH_SCORE_COUNT);
   } catch (err) {
     return [];
@@ -68,19 +84,78 @@ function loadHighScores() {
 }
 
 /**
- * Inserts a new score into the leaderboard and persists the top 5.
+ * Returns true if newScore would land on the top-5 leaderboard, i.e. the
+ * board isn't full yet or newScore beats the current lowest qualifying entry.
  */
-function saveHighScore(newScore) {
+function qualifiesForHighScore(newScore) {
+  const scores = loadHighScores();
+  if (scores.length < HIGH_SCORE_COUNT) return true;
+  return newScore > scores[scores.length - 1].score;
+}
+
+/**
+ * Inserts a new { name, score } entry into the leaderboard and persists the
+ * top 5.
+ */
+function saveHighScore(entry) {
   try {
     const scores = loadHighScores();
-    scores.push(newScore);
-    scores.sort((a, b) => b - a);
+    scores.push(entry);
+    scores.sort((a, b) => b.score - a.score);
     const top = scores.slice(0, HIGH_SCORE_COUNT);
     localStorage.setItem(HIGH_SCORE_STORAGE_KEY, JSON.stringify(top));
     return top;
   } catch (err) {
     return loadHighScores();
   }
+}
+
+// ---------------------------------------------------------------------------
+// High score name entry ('ENTER_NAME' game state)
+// ---------------------------------------------------------------------------
+
+// The 3 letters the player is currently dialing in, cycled with Up/Down or
+// typed directly; nameEntrySlotIndex is which of the 3 is currently active.
+let nameEntryLetters = ['A', 'A', 'A'];
+let nameEntrySlotIndex = 0;
+
+// Which state (GAME_OVER or VICTORY) to land on once the name is confirmed,
+// and the score being saved - captured at the moment name entry starts since
+// `score` may not still reflect it by the time the player confirms.
+let pendingFinalState = null;
+let pendingFinalScore = 0;
+
+/**
+ * Called instead of an immediate GAME_OVER/VICTORY transition whenever the
+ * just-finished run's score qualifies for the top-5 leaderboard: freezes the
+ * score, resets the letter dial to "AAA", and shows the name entry overlay.
+ */
+function startNameEntry(finalState) {
+  nameEntryLetters = ['A', 'A', 'A'];
+  nameEntrySlotIndex = 0;
+  pendingFinalState = finalState;
+  pendingFinalScore = score;
+  gameState = 'ENTER_NAME';
+}
+
+/**
+ * Cycles one letter slot up or down through A-Z, wrapping at both ends.
+ */
+function cycleNameEntryLetter(slotIndex, direction) {
+  const code = nameEntryLetters[slotIndex].charCodeAt(0) - 65;
+  const next = (code + direction + 26) % 26;
+  nameEntryLetters[slotIndex] = String.fromCharCode(65 + next);
+}
+
+/**
+ * Persists the dialed-in 3-letter name with the pending score, refreshes the
+ * leaderboard in localStorage, and lands on whichever screen (GAME_OVER or
+ * VICTORY) triggered name entry.
+ */
+function confirmNameEntry() {
+  saveHighScore({ name: nameEntryLetters.join(''), score: pendingFinalScore });
+  gameState = pendingFinalState;
+  pendingFinalState = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2325,8 +2400,11 @@ function destroyBoss() {
 
   if (nextBossIndex >= BOSS_SEQUENCE.length) {
     // That was the last boss in the sequence - the Oblivion is sealed.
-    gameState = 'VICTORY';
-    saveHighScore(score);
+    if (qualifiesForHighScore(score)) {
+      startNameEntry('VICTORY');
+    } else {
+      gameState = 'VICTORY';
+    }
   }
 }
 
@@ -2615,8 +2693,11 @@ function handlePlayerHit() {
   triggerScreenShake(18, 0.4);
 
   if (player.lives <= 0) {
-    gameState = 'GAME_OVER';
-    saveHighScore(score);
+    if (qualifiesForHighScore(score)) {
+      startNameEntry('GAME_OVER');
+    } else {
+      gameState = 'GAME_OVER';
+    }
   } else {
     resetPlayerPosition();
   }
@@ -2744,6 +2825,21 @@ function handlePrimaryAction(x, y) {
     if (hitIndex !== null) {
       confirmShipSelection(hitIndex);
     }
+  } else if (gameState === 'ENTER_NAME') {
+    const action = getButtonAt(activeMenuButtons, x, y);
+    if (action && action.startsWith('LETTER_UP_')) {
+      const idx = Number(action.slice('LETTER_UP_'.length));
+      cycleNameEntryLetter(idx, 1);
+      nameEntrySlotIndex = idx;
+    } else if (action && action.startsWith('LETTER_DOWN_')) {
+      const idx = Number(action.slice('LETTER_DOWN_'.length));
+      cycleNameEntryLetter(idx, -1);
+      nameEntrySlotIndex = idx;
+    } else if (action && action.startsWith('LETTER_SELECT_')) {
+      nameEntrySlotIndex = Number(action.slice('LETTER_SELECT_'.length));
+    } else if (action === 'CONFIRM') {
+      confirmNameEntry();
+    }
   } else if (gameState === 'GAME_OVER' || gameState === 'VICTORY') {
     gameState = 'START_MENU';
   } else if (gameState === 'PLAYING') {
@@ -2787,6 +2883,38 @@ function setupInput() {
       } else if (e.code === 'Space' || e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         confirmShipSelection(selectedShipIndex);
+      }
+      return;
+    }
+
+    // The high-score name entry overlay dials in 3 letters, independent of
+    // in-flight movement handling below: typing A-Z sets the active slot
+    // and advances, Up/Down cycles a letter, Left/Right moves the active
+    // slot, and Enter/Space confirms.
+    if (gameState === 'ENTER_NAME') {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        cycleNameEntryLetter(nameEntrySlotIndex, 1);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        cycleNameEntryLetter(nameEntrySlotIndex, -1);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        nameEntrySlotIndex = (nameEntrySlotIndex - 1 + 3) % 3;
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        nameEntrySlotIndex = (nameEntrySlotIndex + 1) % 3;
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        nameEntrySlotIndex = (nameEntrySlotIndex - 1 + 3) % 3;
+        nameEntryLetters[nameEntrySlotIndex] = 'A';
+      } else if (/^[a-zA-Z]$/.test(e.key)) {
+        e.preventDefault();
+        nameEntryLetters[nameEntrySlotIndex] = e.key.toUpperCase();
+        nameEntrySlotIndex = (nameEntrySlotIndex + 1) % 3;
+      } else if (e.code === 'Space' || e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        confirmNameEntry();
       }
       return;
     }
@@ -3101,7 +3229,7 @@ function draw() {
   drawStarField(backgroundStars, 'rgba(255, 255, 255, 0.4)');
   drawStarField(foregroundStars, 'rgba(255, 255, 255, 0.85)');
 
-  if (gameState === 'PLAYING' || gameState === 'PAUSED' || gameState === 'GAME_OVER' || gameState === 'VICTORY') {
+  if (gameState === 'PLAYING' || gameState === 'PAUSED' || gameState === 'GAME_OVER' || gameState === 'VICTORY' || gameState === 'ENTER_NAME') {
     // Draw order matters here: entities are drawn after the nebula/starfield
     // above, so enemies/boss/player always render on top of the background.
     drawEnemies();
@@ -3137,6 +3265,9 @@ function draw() {
     drawHUD();
     drawBossHealthBar();
     drawPauseOverlay();
+  } else if (gameState === 'ENTER_NAME') {
+    drawHUD();
+    drawNameEntryScreen();
   } else if (gameState === 'GAME_OVER') {
     drawHUD();
     drawGameOverScreen();
@@ -3606,9 +3737,9 @@ function drawScoreBoard() {
   const startY = canvas.height * 0.4;
   ctx.font = `${Math.round(canvas.width * 0.022)}px 'Orbitron', monospace`;
   for (let i = 0; i < HIGH_SCORE_COUNT; i++) {
-    const value = scores[i];
-    ctx.fillStyle = value !== undefined ? '#e6f1ff' : 'rgba(255, 255, 255, 0.3)';
-    const label = value !== undefined ? `${i + 1}.  ${value}` : `${i + 1}.  -----`;
+    const entry = scores[i];
+    ctx.fillStyle = entry !== undefined ? '#e6f1ff' : 'rgba(255, 255, 255, 0.3)';
+    const label = entry !== undefined ? `${i + 1}.  ${entry.name}  ${entry.score}` : `${i + 1}.  ---  -----`;
     ctx.fillText(label, canvas.width / 2, startY + lineHeight * i);
   }
 
@@ -3974,6 +4105,93 @@ function drawAboutScreen() {
  * Draws a centered "GAME OVER" overlay with the final score and a
  * restart prompt, on top of the frozen gameplay frame.
  */
+/**
+ * Renders the "ENTER YOUR INITIALS" overlay shown when a just-finished run
+ * qualifies for the top-5 leaderboard: 3 letter dials (tap/click their
+ * arrows, or use the keyboard - Left/Right to move slots, Up/Down or typing
+ * A-Z to change a letter) and a CONFIRM button that saves the name via
+ * confirmNameEntry() and proceeds to GAME_OVER/VICTORY.
+ */
+function drawNameEntryScreen() {
+  activeMenuButtons = [];
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = '#ffd700';
+  ctx.shadowColor = '#ffae00';
+  ctx.shadowBlur = 24;
+  ctx.font = `bold ${Math.round(canvas.width * 0.032)}px 'Orbitron', monospace`;
+  ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height * 0.26);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `${Math.round(canvas.width * 0.02)}px 'Orbitron', monospace`;
+  ctx.fillText(`Score: ${pendingFinalScore}`, canvas.width / 2, canvas.height * 0.34);
+
+  ctx.font = `${Math.round(canvas.width * 0.016)}px 'Orbitron', monospace`;
+  ctx.fillText('ENTER YOUR INITIALS', canvas.width / 2, canvas.height * 0.4);
+
+  const boxSize = canvas.width * 0.09;
+  const gap = canvas.width * 0.03;
+  const totalWidth = boxSize * 3 + gap * 2;
+  const startX = canvas.width / 2 - totalWidth / 2;
+  const boxY = canvas.height * 0.53;
+  const arrowSize = boxSize * 0.5;
+  const arrowGap = canvas.height * 0.07;
+
+  for (let i = 0; i < 3; i++) {
+    const x = startX + i * (boxSize + gap);
+    const isActive = i === nameEntrySlotIndex;
+
+    const upY = boxY - arrowGap;
+    drawMenuButton(x + boxSize / 2 - arrowSize / 2, upY - arrowSize / 2, arrowSize, arrowSize, '▲', {
+      fillStyle: 'rgba(0, 20, 30, 0.4)',
+      font: `bold ${Math.round(arrowSize * 0.55)}px 'Orbitron', monospace`,
+    });
+    activeMenuButtons.push({ x: x + boxSize / 2 - arrowSize / 2, y: upY - arrowSize / 2, width: arrowSize, height: arrowSize, action: `LETTER_UP_${i}` });
+
+    ctx.save();
+    ctx.fillStyle = isActive ? 'rgba(0, 229, 255, 0.25)' : 'rgba(0, 20, 30, 0.55)';
+    ctx.strokeStyle = isActive ? '#00e5ff' : 'rgba(0, 229, 255, 0.4)';
+    ctx.lineWidth = isActive ? 4 : 2;
+    ctx.shadowColor = '#00e5ff';
+    ctx.shadowBlur = isActive ? 16 : 0;
+    ctx.fillRect(x, boxY, boxSize, boxSize);
+    ctx.strokeRect(x, boxY, boxSize, boxSize);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.round(boxSize * 0.55)}px 'Orbitron', monospace`;
+    ctx.fillText(nameEntryLetters[i], x + boxSize / 2, boxY + boxSize / 2);
+    ctx.restore();
+    activeMenuButtons.push({ x, y: boxY, width: boxSize, height: boxSize, action: `LETTER_SELECT_${i}` });
+
+    const downY = boxY + boxSize + arrowGap;
+    drawMenuButton(x + boxSize / 2 - arrowSize / 2, downY - arrowSize / 2, arrowSize, arrowSize, '▼', {
+      fillStyle: 'rgba(0, 20, 30, 0.4)',
+      font: `bold ${Math.round(arrowSize * 0.55)}px 'Orbitron', monospace`,
+    });
+    activeMenuButtons.push({ x: x + boxSize / 2 - arrowSize / 2, y: downY - arrowSize / 2, width: arrowSize, height: arrowSize, action: `LETTER_DOWN_${i}` });
+  }
+
+  const btnWidth = canvas.width * 0.2;
+  const btnHeight = canvas.height * 0.08;
+  const btnX = canvas.width / 2 - btnWidth / 2;
+  const btnY = canvas.height * 0.82;
+  drawMenuButton(btnX, btnY, btnWidth, btnHeight, 'CONFIRM', { fillStyle: 'rgba(0, 60, 20, 0.6)', strokeStyle: '#4dff9e', shadowColor: '#4dff9e' });
+  activeMenuButtons.push({ x: btnX, y: btnY, width: btnWidth, height: btnHeight, action: 'CONFIRM' });
+
+  ctx.font = `${Math.round(canvas.width * 0.013)}px 'Orbitron', monospace`;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+  ctx.fillText('Type letters or use Arrow Keys - Enter to Confirm', canvas.width / 2, canvas.height * 0.93);
+
+  ctx.restore();
+}
+
 function drawGameOverScreen() {
   ctx.save();
 
