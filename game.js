@@ -3043,6 +3043,16 @@ function setupInput() {
         break;
       }
     }
+    // Android Chrome (confirmed on a Cubot King Kong) won't raise the
+    // on-screen keyboard for a focus() call made during 'touchstart' once
+    // preventDefault() has been called on it (which the touchstart handler
+    // above always does, to block scrolling) - the element still becomes
+    // document.activeElement, but no keyboard appears, so name entry looked
+    // like a dead tap. touchend never calls preventDefault, so re-asserting
+    // focus here is what actually raises the keyboard.
+    if (gameState === 'ENTER_NAME' && nameInputEl) {
+      nameInputEl.focus();
+    }
   };
   canvas.addEventListener('touchend', clearActiveTouch, { passive: false });
   canvas.addEventListener('touchcancel', clearActiveTouch, { passive: false });
