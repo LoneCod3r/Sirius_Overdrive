@@ -27,14 +27,15 @@ let totalElapsedTime = 0;
 // into a STORY/SHIP LOG tab pair (see aboutTab) covering the backstory and
 // the browsable ship codex; 'SHIP_SELECTION' lets the player pick a ship
 // before their first launch;
+// Clicking START on the title screen goes to 'ENTER_NAME' first (see
+// startNameEntry()), where the player dials in a 3-letter callsign, before
+// landing on 'SHIP_SELECTION'; that name is then reused automatically for
+// any top-5 leaderboard entry the run earns, with no further prompting.
 // 'PLAYING' runs the full simulation; 'PAUSED' freezes everything (including
 // the starfield) until resumed; 'GAME_OVER' and 'VICTORY' freeze gameplay,
 // show their respective overlay (a congratulations message for VICTORY,
 // after the final boss - the last entry in BOSS_SEQUENCE - is defeated), and
-// return to START_MENU (not an automatic restart) on the next input. If the
-// final score qualifies for the top-5 leaderboard, 'ENTER_NAME' is shown
-// first (see startNameEntry()) so the player can dial in a 3-letter name
-// before landing on GAME_OVER/VICTORY.
+// return to START_MENU (not an automatic restart) on the next input.
 let gameState = 'LOADING';
 let score = 0;
 
@@ -111,30 +112,32 @@ function saveHighScore(entry) {
 }
 
 // ---------------------------------------------------------------------------
-// High score name entry ('ENTER_NAME' game state)
+// Player name entry ('ENTER_NAME' game state)
 // ---------------------------------------------------------------------------
+
+// The callsign entered before ship selection; reused automatically for any
+// leaderboard entry a run earns, with no further prompting mid-game.
+let playerName = DEFAULT_HIGH_SCORE_NAME;
 
 // The 3 letters the player is currently dialing in, cycled with Up/Down or
 // typed directly; nameEntrySlotIndex is which of the 3 is currently active.
 let nameEntryLetters = ['A', 'A', 'A'];
 let nameEntrySlotIndex = 0;
 
-// Which state (GAME_OVER or VICTORY) to land on once the name is confirmed,
-// and the score being saved - captured at the moment name entry starts since
-// `score` may not still reflect it by the time the player confirms.
+// Which state to land on once the name is confirmed (always 'SHIP_SELECTION'
+// today, kept as a variable rather than a hardcoded jump so name entry stays
+// reusable if another entry point is added later).
 let pendingFinalState = null;
-let pendingFinalScore = 0;
 
 /**
- * Called instead of an immediate GAME_OVER/VICTORY transition whenever the
- * just-finished run's score qualifies for the top-5 leaderboard: freezes the
- * score, resets the letter dial to "AAA", and shows the name entry overlay.
+ * Shows the name entry overlay, pre-filled with the player's last-entered
+ * callsign (or "AAA" the first time), and records which state to land on
+ * once they confirm.
  */
-function startNameEntry(finalState) {
-  nameEntryLetters = ['A', 'A', 'A'];
+function startNameEntry(nextState) {
+  nameEntryLetters = playerName.padEnd(3, 'A').slice(0, 3).split('');
   nameEntrySlotIndex = 0;
-  pendingFinalState = finalState;
-  pendingFinalScore = score;
+  pendingFinalState = nextState;
   gameState = 'ENTER_NAME';
 }
 
@@ -148,12 +151,11 @@ function cycleNameEntryLetter(slotIndex, direction) {
 }
 
 /**
- * Persists the dialed-in 3-letter name with the pending score, refreshes the
- * leaderboard in localStorage, and lands on whichever screen (GAME_OVER or
- * VICTORY) triggered name entry.
+ * Saves the dialed-in 3-letter callsign as the current player name and
+ * lands on whichever state (SHIP_SELECTION) triggered name entry.
  */
 function confirmNameEntry() {
-  saveHighScore({ name: nameEntryLetters.join(''), score: pendingFinalScore });
+  playerName = nameEntryLetters.join('');
   gameState = pendingFinalState;
   pendingFinalState = null;
 }
@@ -2401,10 +2403,9 @@ function destroyBoss() {
   if (nextBossIndex >= BOSS_SEQUENCE.length) {
     // That was the last boss in the sequence - the Oblivion is sealed.
     if (qualifiesForHighScore(score)) {
-      startNameEntry('VICTORY');
-    } else {
-      gameState = 'VICTORY';
+      saveHighScore({ name: playerName, score });
     }
+    gameState = 'VICTORY';
   }
 }
 
@@ -2694,10 +2695,9 @@ function handlePlayerHit() {
 
   if (player.lives <= 0) {
     if (qualifiesForHighScore(score)) {
-      startNameEntry('GAME_OVER');
-    } else {
-      gameState = 'GAME_OVER';
+      saveHighScore({ name: playerName, score });
     }
+    gameState = 'GAME_OVER';
   } else {
     resetPlayerPosition();
   }
@@ -2799,7 +2799,7 @@ function handlePrimaryAction(x, y) {
   if (gameState === 'START_MENU' || gameState === 'ABOUT' || gameState === 'HOW_TO_PLAY' || gameState === 'SCORE_BOARD') {
     const action = getButtonAt(activeMenuButtons, x, y);
     if (action === 'START') {
-      gameState = 'SHIP_SELECTION';
+      startNameEntry('SHIP_SELECTION');
     } else if (action === 'ABOUT') {
       gameState = 'ABOUT';
       aboutTab = 'STORY';
@@ -3229,7 +3229,7 @@ function draw() {
   drawStarField(backgroundStars, 'rgba(255, 255, 255, 0.4)');
   drawStarField(foregroundStars, 'rgba(255, 255, 255, 0.85)');
 
-  if (gameState === 'PLAYING' || gameState === 'PAUSED' || gameState === 'GAME_OVER' || gameState === 'VICTORY' || gameState === 'ENTER_NAME') {
+  if (gameState === 'PLAYING' || gameState === 'PAUSED' || gameState === 'GAME_OVER' || gameState === 'VICTORY') {
     // Draw order matters here: entities are drawn after the nebula/starfield
     // above, so enemies/boss/player always render on top of the background.
     drawEnemies();
@@ -3266,7 +3266,6 @@ function draw() {
     drawBossHealthBar();
     drawPauseOverlay();
   } else if (gameState === 'ENTER_NAME') {
-    drawHUD();
     drawNameEntryScreen();
   } else if (gameState === 'GAME_OVER') {
     drawHUD();
@@ -4102,15 +4101,12 @@ function drawAboutScreen() {
 }
 
 /**
- * Draws a centered "GAME OVER" overlay with the final score and a
- * restart prompt, on top of the frozen gameplay frame.
- */
-/**
- * Renders the "ENTER YOUR INITIALS" overlay shown when a just-finished run
- * qualifies for the top-5 leaderboard: 3 letter dials (tap/click their
- * arrows, or use the keyboard - Left/Right to move slots, Up/Down or typing
- * A-Z to change a letter) and a CONFIRM button that saves the name via
- * confirmNameEntry() and proceeds to GAME_OVER/VICTORY.
+ * Renders the pilot callsign entry overlay shown right after START, before
+ * ship selection: 3 letter dials (tap/click their arrows, or use the
+ * keyboard - Left/Right to move slots, Up/Down or typing A-Z to change a
+ * letter) and a CONFIRM button that saves the name via confirmNameEntry()
+ * and proceeds to SHIP_SELECTION. This name is then reused automatically for
+ * any top-5 leaderboard entry the run earns.
  */
 function drawNameEntryScreen() {
   activeMenuButtons = [];
@@ -4126,15 +4122,12 @@ function drawNameEntryScreen() {
   ctx.shadowColor = '#ffae00';
   ctx.shadowBlur = 24;
   ctx.font = `bold ${Math.round(canvas.width * 0.032)}px 'Orbitron', monospace`;
-  ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height * 0.26);
+  ctx.fillText('PILOT IDENTIFICATION', canvas.width / 2, canvas.height * 0.3);
   ctx.shadowBlur = 0;
 
   ctx.fillStyle = '#ffffff';
-  ctx.font = `${Math.round(canvas.width * 0.02)}px 'Orbitron', monospace`;
-  ctx.fillText(`Score: ${pendingFinalScore}`, canvas.width / 2, canvas.height * 0.34);
-
   ctx.font = `${Math.round(canvas.width * 0.016)}px 'Orbitron', monospace`;
-  ctx.fillText('ENTER YOUR INITIALS', canvas.width / 2, canvas.height * 0.4);
+  ctx.fillText('ENTER YOUR CALLSIGN', canvas.width / 2, canvas.height * 0.4);
 
   const boxSize = canvas.width * 0.09;
   const gap = canvas.width * 0.03;
@@ -4192,6 +4185,10 @@ function drawNameEntryScreen() {
   ctx.restore();
 }
 
+/**
+ * Draws a centered "GAME OVER" overlay with the final score and a
+ * restart prompt, on top of the frozen gameplay frame.
+ */
 function drawGameOverScreen() {
   ctx.save();
 
