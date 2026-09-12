@@ -3015,6 +3015,80 @@ function drawFullscreenButton() {
   ctx.restore();
 }
 
+// ---------------------------------------------------------------------------
+// Pause button (touch-accessible alternative to the 'P' key)
+// ---------------------------------------------------------------------------
+
+// Recomputed only while PLAYING/PAUSED (see drawPauseButton()) - pause is
+// meaningless anywhere else, so isPauseButtonHit() also checks gameState
+// directly rather than relying on this being cleared on other screens.
+let pauseButtonRect = null;
+
+/**
+ * True if (x, y) - canvas coordinates from a tap/click - lands on the pause
+ * button while it's actually showing (PLAYING/PAUSED only). Always false
+ * for a keyboard-triggered call (x/y undefined).
+ */
+function isPauseButtonHit(x, y) {
+  if (!pauseButtonRect || x === undefined || y === undefined) return false;
+  if (gameState !== 'PLAYING' && gameState !== 'PAUSED') return false;
+  return x >= pauseButtonRect.x && x <= pauseButtonRect.x + pauseButtonRect.width
+    && y >= pauseButtonRect.y && y <= pauseButtonRect.y + pauseButtonRect.height;
+}
+
+/**
+ * Draws a pause/play icon just left of the fullscreen button, tappable/
+ * clickable to toggle PLAYING/PAUSED - see isPauseButtonHit(), checked
+ * ahead of normal input handling in setupInput() and handlePrimaryAction().
+ * Only called while PLAYING or PAUSED (see draw()) - there is nothing to
+ * pause anywhere else.
+ */
+function drawPauseButton() {
+  const size = Math.round(canvas.width * 0.045);
+  const margin = canvas.width * 0.015;
+  const gap = canvas.width * 0.012;
+  const x = canvas.width - margin - size - gap - size - gap - size;
+  const y = margin;
+  pauseButtonRect = { x, y, width: size, height: size };
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 20, 30, 0.6)';
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, size, size, size * 0.2);
+  } else {
+    ctx.rect(x, y, size, size);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  ctx.fillStyle = '#ffffff';
+
+  if (gameState === 'PAUSED') {
+    // A play triangle - tap to resume.
+    const r = size * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.6, cy - r);
+    ctx.lineTo(cx - r * 0.6, cy + r);
+    ctx.lineTo(cx + r, cy);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // Two bars - tap to pause.
+    const barW = size * 0.14;
+    const barH = size * 0.4;
+    const gapW = size * 0.1;
+    ctx.fillRect(cx - gapW / 2 - barW, cy - barH / 2, barW, barH);
+    ctx.fillRect(cx + gapW / 2, cy - barH / 2, barW, barH);
+  }
+
+  ctx.restore();
+}
+
 /**
  * Routes a "primary" input (tap or click - the menu screens have no
  * catch-all "click/tap anywhere" behavior anymore, only their actual
@@ -3023,8 +3097,9 @@ function drawFullscreenButton() {
  * tapped/clicked ship; PLAYING fires a laser; GAME_OVER/VICTORY return to
  * the main menu. (x, y) are canvas coordinates when available (a
  * click/tap) and undefined for a keyboard-triggered call (Spacebar). The
- * mute and fullscreen buttons (see isMuteButtonHit()/isFullscreenButtonHit())
- * take priority over all of that.
+ * mute, fullscreen, and pause buttons (see isMuteButtonHit()/
+ * isFullscreenButtonHit()/isPauseButtonHit()) take priority over all of
+ * that.
  */
 function handlePrimaryAction(x, y) {
   if (isMuteButtonHit(x, y)) {
@@ -3033,6 +3108,10 @@ function handlePrimaryAction(x, y) {
   }
   if (isFullscreenButtonHit(x, y)) {
     toggleFullscreen();
+    return;
+  }
+  if (isPauseButtonHit(x, y)) {
+    togglePause();
     return;
   }
 
@@ -3207,15 +3286,15 @@ function setupInput() {
     const touch = e.changedTouches[0];
     const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
 
-    // A touch that starts on the mute or fullscreen button is never treated
-    // as a gameplay drag: activeTouchId is left null, so the touchmove
-    // handler below (which moves the ship to wherever this same touch
-    // goes) never matches it and does nothing for the rest of this touch's
-    // lifetime - not just at this initial instant. Without this, even a
-    // sub-pixel wobble during the tap (touchmove fires for that too) would
-    // warp the ship straight to the button's corner, since touchmove had
-    // no such guard of its own.
-    if (isMuteButtonHit(x, y) || isFullscreenButtonHit(x, y)) {
+    // A touch that starts on the mute, fullscreen, or pause button is never
+    // treated as a gameplay drag: activeTouchId is left null, so the
+    // touchmove handler below (which moves the ship to wherever this same
+    // touch goes) never matches it and does nothing for the rest of this
+    // touch's lifetime - not just at this initial instant. Without this,
+    // even a sub-pixel wobble during the tap (touchmove fires for that too)
+    // would warp the ship straight to the button's corner, since touchmove
+    // had no such guard of its own.
+    if (isMuteButtonHit(x, y) || isFullscreenButtonHit(x, y) || isPauseButtonHit(x, y)) {
       handlePrimaryAction(x, y);
       return;
     }
@@ -3368,8 +3447,16 @@ function init() {
   // Entering/exiting fullscreen changes the available viewport (and, on
   // mobile, removes the address bar/nav bar that otherwise eats into it) -
   // re-fit the canvas once the browser has actually applied the change.
-  document.addEventListener('fullscreenchange', resizeCanvas);
-  document.addEventListener('webkitfullscreenchange', resizeCanvas);
+  // Same stale-dimensions timing issue as orientationchange (reported: HUD
+  // elements pinned near the top, like Lives, ending up cut off after going
+  // fullscreen) - the event can fire before the viewport has actually
+  // finished resizing, so a follow-up check a beat later is needed too.
+  const handleFullscreenChange = () => {
+    resizeCanvas();
+    setTimeout(resizeCanvas, 300);
+  };
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
   // Some mobile browsers (reported: rotating out of the "rotate your
   // device" prompt on a Huawei P40 Lite never dismissed it) fire
   // 'orientationchange' before window.innerWidth/innerHeight have actually
@@ -3579,6 +3666,9 @@ function draw() {
     drawMuteButton();
     drawFullscreenButton();
   }
+  if (gameState === 'PLAYING' || gameState === 'PAUSED') {
+    drawPauseButton();
+  }
 }
 
 /**
@@ -3606,7 +3696,7 @@ function drawPauseOverlay() {
   ctx.shadowBlur = 0;
   ctx.fillStyle = '#ffffff';
   ctx.font = `${Math.round(canvas.width * 0.02)}px 'Orbitron', monospace`;
-  ctx.fillText('Press P to Resume', canvas.width / 2, canvas.height / 2 + 40);
+  ctx.fillText('Press P or Tap ▶ to Resume', canvas.width / 2, canvas.height / 2 + 40);
 
   ctx.restore();
 }
