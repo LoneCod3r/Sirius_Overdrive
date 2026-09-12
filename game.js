@@ -1968,7 +1968,13 @@ const POWERUP_DURATION = 10; // seconds an upgraded weapon lasts before revertin
 // next extra life is coming instead of hoping for a rare pickup.
 const HEART_LETTER = 'HEART';
 const HEART_COLOR = '#ff4d6d';
-const MAX_PLAYER_LIVES = 5; // extra lives stop being granted once lives reach this cap
+// Deliberately high enough to be practically unreachable rather than a real
+// gameplay ceiling: at 5 (and even 10), ordinary score progression alone
+// maxed the player out well before Boss 1 even spawns (scoreThreshold
+// 1000), so its 500-point BOSS_DEFEAT_SCORE bonus could never grant a
+// life. 50 keeps every milestone (and boss kill) meaningful for the whole
+// run while still being a real, finite cap rather than no cap at all.
+const MAX_PLAYER_LIVES = 50; // extra lives stop being granted once lives reach this cap
 const LIFE_AWARD_SCORE_INTERVAL = 100; // grant +1 life every 100 points
 
 let activeWeapon = 'NORMAL';
