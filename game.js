@@ -3410,6 +3410,21 @@ function setupInput() {
 // from "desktop window," with no dependency on unreliable input detection.
 const PHONE_PORTRAIT_MAX_WIDTH = 500;
 
+// Screen-size based (deliberately NOT touch-based - see the note above on
+// why touch/pointer detection is unreliable for this user) mobile
+// detection, independent of current orientation: a real phone's short edge
+// stays within PHONE_PORTRAIT_MAX_WIDTH whether it's currently held
+// portrait or landscape, while any desktop/laptop screen's short edge is
+// comfortably above it. Used to hide touch-only affordances (the pause and
+// fullscreen buttons) that a desktop user doesn't need, since they already
+// have physical P/F11 keys - unlike mute, which stays visible everywhere.
+const IS_MOBILE_DEVICE = (() => {
+  const shortEdge = (typeof screen !== 'undefined' && screen.width && screen.height)
+    ? Math.min(screen.width, screen.height)
+    : Math.min(window.innerWidth, window.innerHeight);
+  return shortEdge <= PHONE_PORTRAIT_MAX_WIDTH;
+})();
+
 /**
  * Shows/hides the "rotate your device" overlay: this is a landscape-style
  * shooter, so a phone held in portrait would otherwise just show the 16:9
@@ -3703,9 +3718,11 @@ function draw() {
 
   if (gameState !== 'LOADING') {
     drawMuteButton();
-    drawFullscreenButton();
+    if (IS_MOBILE_DEVICE) {
+      drawFullscreenButton();
+    }
   }
-  if (gameState === 'PLAYING' || gameState === 'PAUSED') {
+  if (IS_MOBILE_DEVICE && (gameState === 'PLAYING' || gameState === 'PAUSED')) {
     drawPauseButton();
   }
 }
