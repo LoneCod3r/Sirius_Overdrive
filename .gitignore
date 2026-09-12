@@ -4,3 +4,6 @@
 /*.webp
 /*.gif
 !/favicon.png
+
+# Firebase CLI's local deploy cache - machine-specific, not config.
+.firebase/

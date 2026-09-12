@@ -1,0 +1,20 @@
+{
+  "hosting": {
+    "site": "sirius-overdrive",
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "Digital_SFX_Set.zip",
+      "Plan.docx",
+      "README.md",
+      "fav1.png",
+      "Main1-problem.png",
+      "main1-flame-tails.png",
+      "problem-ship.png",
+      "problem-title-scale.png",
+      "problem-visualization.png"
+    ]
+  }
+}
