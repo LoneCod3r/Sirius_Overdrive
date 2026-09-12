@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Syntax-check game.js
+        run: node --check game.js
+
+      - name: Syntax-check player-ship-assets.js
+        run: node --check player-ship-assets.js
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: syntax-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright
+        run: |
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Serve the game
+        run: |
+          python3 -m http.server 8080 &
+          npx wait-on http://localhost:8080/index.html
+
+      # Loads the real game in headless Chromium and drives it through the
+      # core state machine and mechanics (menus, name entry, ship selection,
+      # pause/mute, weapon pickups, boss flip flags, life cap, leaderboard
+      # save) - see .github/scripts/smoke-test.js for the full checklist.
+      - name: Run smoke test
+        run: node .github/scripts/smoke-test.js
+
+      - name: Upload failure screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-failure
+          path: .github/scripts/*.png
+          if-no-files-found: ignore
