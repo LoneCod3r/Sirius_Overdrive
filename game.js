@@ -845,6 +845,18 @@ function markAssetSettled() {
 const LOADING_MIN_DURATION = 10; // seconds
 let loadingElapsed = 0;
 
+// Safety net: if a single sprite's <img> never fires either onload or
+// onerror (seen in the wild on some OEM mobile browsers - inconsistent
+// WebP decode support being the prime suspect, since Main2.webp is the
+// only non-JPEG/PNG source asset - stalling assetsLoaded short of
+// assetsToLoad forever), the LOADING state would otherwise never advance
+// and the game would be stuck on a full progress bar permanently. Every
+// sprite already degrades gracefully when missing (drawing code just
+// skips that slot, per the "no vector fallback" design), so forcing the
+// transition once this much time has passed is always safe - at worst a
+// ship/enemy is missing its art, never a stuck game.
+const LOADING_SAFETY_TIMEOUT = LOADING_MIN_DURATION + 15; // seconds
+
 /**
  * Kicks off loading for every sprite. Each entry lists its preferred
  * filename first, falling back to the actual delivered asset names.
@@ -3066,7 +3078,20 @@ function updateOrientationOverlay() {
   const overlay = document.getElementById('rotateOverlay');
   if (!overlay) return;
   const isPortrait = window.innerHeight > window.innerWidth;
-  const isPhoneSized = window.innerWidth <= PHONE_PORTRAIT_MAX_WIDTH;
+  // window.innerWidth alone isn't reliable on every mobile browser: some
+  // OEM/budget browsers (reported on a Cubot King Kong) don't fully honor
+  // `width=device-width` and instead report a desktop-style fallback
+  // viewport (often ~980px), so a real ~360-420px-wide phone reads as "not
+  // phone sized" - the rotate prompt never shows, and the game instead
+  // renders as a tiny, correctly-proportioned-but-zoomed-out 16:9 canvas
+  // with huge black bars, since the whole fake-980px layout then gets
+  // scaled down to fit the real screen. `screen.width`/`height` reflect the
+  // actual hardware display and aren't subject to that same viewport-meta
+  // quirk, so checking both catches this even when the first one is fooled.
+  const screenShortEdge = (typeof screen !== 'undefined' && screen.width && screen.height)
+    ? Math.min(screen.width, screen.height)
+    : Infinity;
+  const isPhoneSized = window.innerWidth <= PHONE_PORTRAIT_MAX_WIDTH || screenShortEdge <= PHONE_PORTRAIT_MAX_WIDTH;
   const shouldShow = isPortrait && isPhoneSized;
   overlay.hidden = !shouldShow;
   // Belt-and-suspenders: also drive display directly via inline style
@@ -3119,6 +3144,12 @@ function init() {
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('orientationchange', resizeCanvas);
   resizeCanvas();
+  // Some mobile browsers report a stale/incorrect window.innerWidth or
+  // innerHeight for the first moment after load, before browser chrome
+  // (address bar, etc.) finishes settling - a re-check shortly after catches
+  // that without waiting on an actual resize/orientationchange event, which
+  // may never come if the page just loaded already-mis-sized.
+  setTimeout(resizeCanvas, 300);
   resetPlayerPosition();
   initStars();
   initNebula();
@@ -3162,7 +3193,12 @@ function update(deltaTime) {
 
   if (gameState === 'LOADING') {
     loadingElapsed += deltaTime;
-    if (assetsLoaded >= assetsToLoad && loadingElapsed >= LOADING_MIN_DURATION) {
+    const allAssetsSettled = assetsLoaded >= assetsToLoad;
+    const safetyTimeoutHit = loadingElapsed >= LOADING_SAFETY_TIMEOUT;
+    if ((allAssetsSettled || safetyTimeoutHit) && loadingElapsed >= LOADING_MIN_DURATION) {
+      if (safetyTimeoutHit && !allAssetsSettled) {
+        console.warn('Loading safety timeout hit - at least one sprite never finished loading; proceeding without it.');
+      }
       gameState = 'START_MENU';
     }
     return;
