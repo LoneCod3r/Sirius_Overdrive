@@ -2110,12 +2110,13 @@ function activatePowerUp(letter) {
 
 /**
  * Claims a 1UP heart: grants an extra life (capped at MAX_PLAYER_LIVES) and
- * shows the pickup banner + cue sound, same as a weapon capsule.
+ * shows the pickup banner + cue sound, same as a weapon capsule. Once lives
+ * are already at the cap, this is a no-op - no banner, no sound - since no
+ * life actually changes hands.
  */
 function claimHeart() {
-  if (player.lives < MAX_PLAYER_LIVES) {
-    player.lives += 1;
-  }
+  if (player.lives >= MAX_PLAYER_LIVES) return;
+  player.lives += 1;
   pickupMessage = { text: '1UP! EXTRA LIFE!', timer: PICKUP_MESSAGE_DURATION };
   audioManager.playPickupSound();
 }
