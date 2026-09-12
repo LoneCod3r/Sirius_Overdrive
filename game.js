@@ -3142,7 +3142,16 @@ function init() {
   ctx.imageSmoothingQuality = 'high';
 
   window.addEventListener('resize', resizeCanvas);
-  window.addEventListener('orientationchange', resizeCanvas);
+  // Some mobile browsers (reported: rotating out of the "rotate your
+  // device" prompt on a Huawei P40 Lite never dismissed it) fire
+  // 'orientationchange' before window.innerWidth/innerHeight have actually
+  // updated to the new orientation - resizeCanvas() then reads the stale,
+  // pre-rotation dimensions and updateOrientationOverlay() decides nothing
+  // changed. Re-checking again a beat later catches the corrected values.
+  window.addEventListener('orientationchange', () => {
+    resizeCanvas();
+    setTimeout(resizeCanvas, 300);
+  });
   resizeCanvas();
   // Some mobile browsers report a stale/incorrect window.innerWidth or
   // innerHeight for the first moment after load, before browser chrome
