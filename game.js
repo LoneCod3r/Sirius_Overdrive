@@ -3636,10 +3636,6 @@ function drawHowToPlay() {
   const wasdCenterX = canvas.width * 0.18;
   drawWasdCluster(wasdCenterX, rowY, keySize);
   drawControlCaption(wasdCenterX, rowY + keySize * 1.35, 'MOVE');
-  drawControlCaption(wasdCenterX, rowY + keySize * 1.35 + canvas.height * 0.025, '(or ARROW KEYS)', {
-    color: 'rgba(255, 255, 255, 0.55)',
-    font: `${Math.round(canvas.width * 0.011)}px 'Orbitron', monospace`,
-  });
 
   const spaceWidth = canvas.width * 0.24;
   const spaceX = canvas.width / 2 - spaceWidth / 2;
