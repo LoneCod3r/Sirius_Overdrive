@@ -467,7 +467,9 @@ const audioManager = {
   explosionSound: null,
   music: null,
   musicStarted: false,
-  musicMuted: false,
+  // Covers the music AND every sound effect (laser, explosion, pickup) -
+  // bound to the 'M' key via toggleMute(), see setupInput().
+  muted: false,
 
   LASER_URL:
     'https://archive.org/download/Designers-Choice-Collection-Laser/LASERS%2FGUN%2FLASRGun-CU_Zap%2C%20Synthesized%2C%20Anime_Nicholas%20Judy_TDC.mp3',
@@ -502,7 +504,7 @@ const audioManager = {
    * shots/explosions each play in full instead of cutting each other off.
    */
   _playOneShot(sound) {
-    if (!sound) return;
+    if (!sound || this.muted) return;
     try {
       const instance = sound.cloneNode(true);
       instance.volume = sound.volume;
@@ -531,7 +533,7 @@ const audioManager = {
    * policies. Safe to call repeatedly - only the first call has any effect.
    */
   playMusic() {
-    if (!this.music || this.musicMuted || this.musicStarted) return;
+    if (!this.music || this.muted || this.musicStarted) return;
     this.musicStarted = true;
     this.music.play().catch(() => {
       this.musicStarted = false;
@@ -539,13 +541,14 @@ const audioManager = {
   },
 
   /**
-   * Mutes/unmutes the music track (bound to the 'M' key).
+   * Mutes/unmutes all audio - music and every sound effect (laser,
+   * explosion, pickup) alike - bound to the 'M' key.
    */
-  toggleMusic() {
+  toggleMute() {
+    this.muted = !this.muted;
     if (!this.music) return;
     try {
-      this.musicMuted = !this.musicMuted;
-      if (this.musicMuted) {
+      if (this.muted) {
         this.music.pause();
       } else if (this.musicStarted) {
         this.music.play().catch(() => {});
@@ -563,6 +566,7 @@ const audioManager = {
    * always distinct from the laser/explosion sound effects.
    */
   playPickupSound() {
+    if (this.muted) return;
     try {
       if (!this.audioContext) {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -2782,7 +2786,7 @@ function togglePause() {
     gameState = 'PLAYING';
     // Respect an existing mute (the 'M' key) - don't resurrect music the
     // player deliberately silenced before pausing.
-    if (audioManager.music && !audioManager.musicMuted) {
+    if (audioManager.music && !audioManager.muted) {
       audioManager.music.play().catch(() => {});
     }
   }
@@ -2962,7 +2966,7 @@ function setupInput() {
     }
 
     if (e.key === 'm' || e.key === 'M') {
-      audioManager.toggleMusic();
+      audioManager.toggleMute();
       return;
     }
 
@@ -3660,7 +3664,7 @@ function drawHowToPlay() {
     topColor: '#3a1c26',
     faceColor: '#170c10',
   });
-  drawControlCaption(mX + keySize / 2, rowY + keySize * 0.85, 'MUTE MUSIC');
+  drawControlCaption(mX + keySize / 2, rowY + keySize * 0.85, 'MUTE SOUND');
 
   // --- Weapon power-ups row ----------------------------------------------
   ctx.save();
