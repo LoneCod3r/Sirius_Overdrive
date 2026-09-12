@@ -479,18 +479,22 @@ const audioManager = {
 
   init() {
     try {
+      // Rebalanced so the background music always reads as the loudest
+      // element - the laser fires far more often than anything else makes
+      // noise, so even a moderate per-shot volume added up to drowning out
+      // the music during any sustained firing.
       this.laserSound = new Audio(this.LASER_URL);
       this.laserSound.preload = 'auto';
-      this.laserSound.volume = 0.5;
+      this.laserSound.volume = 0.2;
 
       this.explosionSound = new Audio(this.EXPLOSION_URL);
       this.explosionSound.preload = 'auto';
-      this.explosionSound.volume = 0.6;
+      this.explosionSound.volume = 0.4;
 
       this.music = new Audio(this.MUSIC_URL);
       this.music.preload = 'auto';
       this.music.loop = true;
-      this.music.volume = 0.35;
+      this.music.volume = 0.5;
     } catch (err) {
       // Audio API unavailable - the game continues without sound.
       this.laserSound = null;
@@ -2827,6 +2831,89 @@ function getButtonAt(buttons, x, y) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Mute button (touch-accessible alternative to the 'M' key)
+// ---------------------------------------------------------------------------
+
+// Recomputed every draw() call so it always matches the current canvas size
+// (including after a resize); read by isMuteButtonHit() below. There is no
+// touch equivalent of a keyboard shortcut, so without this, mobile players
+// had no way at all to mute the game.
+let muteButtonRect = null;
+
+/**
+ * True if (x, y) - canvas coordinates from a tap/click - lands on the mute
+ * button. Always false for a keyboard-triggered call (x/y undefined).
+ */
+function isMuteButtonHit(x, y) {
+  if (!muteButtonRect || x === undefined || y === undefined) return false;
+  return x >= muteButtonRect.x && x <= muteButtonRect.x + muteButtonRect.width
+    && y >= muteButtonRect.y && y <= muteButtonRect.y + muteButtonRect.height;
+}
+
+/**
+ * Draws a small speaker icon fixed in the top-right corner (every screen
+ * except LOADING, since there's nothing to mute yet) that toggles
+ * audioManager.muted when tapped/clicked - see isMuteButtonHit(), checked
+ * ahead of normal input handling in setupInput() and handlePrimaryAction().
+ */
+function drawMuteButton() {
+  const size = Math.round(canvas.width * 0.045);
+  const margin = canvas.width * 0.015;
+  const x = canvas.width - margin - size;
+  const y = margin;
+  muteButtonRect = { x, y, width: size, height: size };
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 20, 30, 0.6)';
+  ctx.strokeStyle = audioManager.muted ? 'rgba(255, 77, 109, 0.85)' : 'rgba(0, 229, 255, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, size, size, size * 0.2);
+  } else {
+    ctx.rect(x, y, size, size);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  // Speaker icon: a small body + cone, centered in the button.
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const bodyX = cx - size * 0.26;
+  const bodyW = size * 0.16;
+  const bodyH = size * 0.22;
+  const coneTipX = bodyX + bodyW + size * 0.16;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.rect(bodyX, cy - bodyH / 2, bodyW, bodyH);
+  ctx.moveTo(bodyX + bodyW, cy - bodyH / 2);
+  ctx.lineTo(coneTipX, cy - bodyH * 1.3);
+  ctx.lineTo(coneTipX, cy + bodyH * 1.3);
+  ctx.closePath();
+  ctx.fill();
+
+  if (audioManager.muted) {
+    ctx.strokeStyle = '#ff4d6d';
+    ctx.lineWidth = Math.max(2, size * 0.09);
+    ctx.beginPath();
+    ctx.moveTo(x + size * 0.18, y + size * 0.18);
+    ctx.lineTo(x + size * 0.82, y + size * 0.82);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(1.5, size * 0.05);
+    for (const r of [0.24, 0.36]) {
+      ctx.beginPath();
+      ctx.arc(coneTipX, cy, size * r, -Math.PI / 4, Math.PI / 4);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
 /**
  * Routes a "primary" input (tap or click - the menu screens have no
  * catch-all "click/tap anywhere" behavior anymore, only their actual
@@ -2834,9 +2921,15 @@ function getButtonAt(buttons, x, y) {
  * SCORE_BOARD only react to their own buttons; ship selection confirms a
  * tapped/clicked ship; PLAYING fires a laser; GAME_OVER/VICTORY return to
  * the main menu. (x, y) are canvas coordinates when available (a
- * click/tap) and undefined for a keyboard-triggered call (Spacebar).
+ * click/tap) and undefined for a keyboard-triggered call (Spacebar). The
+ * mute button (see isMuteButtonHit()) takes priority over all of that.
  */
 function handlePrimaryAction(x, y) {
+  if (isMuteButtonHit(x, y)) {
+    audioManager.toggleMute();
+    return;
+  }
+
   if (gameState === 'START_MENU' || gameState === 'ABOUT' || gameState === 'HOW_TO_PLAY' || gameState === 'SCORE_BOARD') {
     const action = getButtonAt(activeMenuButtons, x, y);
     if (action === 'START') {
@@ -3009,7 +3102,11 @@ function setupInput() {
     activeTouchId = touch.identifier;
     const { x, y } = getCanvasCoordinates(touch.clientX, touch.clientY);
 
-    if (gameState === 'PLAYING') {
+    // Tapping the mute button must not also warp the ship to that corner
+    // (the PLAYING move-to-touch below would otherwise fire unconditionally
+    // for any tap) - handlePrimaryAction() below still handles the actual
+    // toggle, this only guards the movement side effect.
+    if (gameState === 'PLAYING' && !isMuteButtonHit(x, y)) {
       player.x = x - player.width / 2;
       player.y = y - player.height / 2;
       clampPlayerToBounds();
@@ -3356,6 +3453,10 @@ function draw() {
     drawHUD();
     drawVictoryScreen();
   }
+
+  if (gameState !== 'LOADING') {
+    drawMuteButton();
+  }
 }
 
 /**
@@ -3415,9 +3516,12 @@ function drawHUD() {
   const weaponLabel = `Weapon: ${WEAPON_TYPES[activeWeapon].label}`;
   ctx.fillText(activeWeapon === 'NORMAL' ? weaponLabel : `${weaponLabel} (${Math.ceil(weaponTimer)}s)`, margin, margin + lineHeight * 2);
 
+  // Pushed down below the mute button (top-right corner, drawn separately
+  // by drawMuteButton() at the very end of draw()) so the two never overlap.
+  const muteButtonSize = canvas.width * 0.045;
   ctx.textAlign = 'right';
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(`Lives: ${player.lives}`, canvas.width - margin, margin);
+  ctx.fillText(`Lives: ${player.lives}`, canvas.width - margin, margin + muteButtonSize + margin);
 
   ctx.restore();
 }
