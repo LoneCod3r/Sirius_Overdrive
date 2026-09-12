@@ -4160,20 +4160,16 @@ function drawNameEntryScreen() {
   ctx.lineTo(canvas.width / 2 + lineWidth / 2, canvas.height * 0.53);
   ctx.stroke();
 
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-  ctx.font = `${Math.round(canvas.width * 0.014)}px 'Orbitron', monospace`;
-  ctx.fillText(`UP TO ${NAME_MAX_LENGTH} CHARACTERS`, canvas.width / 2, canvas.height * 0.6);
-
   const btnWidth = canvas.width * 0.22;
   const btnHeight = canvas.height * 0.08;
   const btnX = canvas.width / 2 - btnWidth / 2;
-  const btnY = canvas.height * 0.72;
+  const btnY = canvas.height * 0.65;
   drawMenuButton(btnX, btnY, btnWidth, btnHeight, 'CONFIRM', { fillStyle: 'rgba(0, 60, 20, 0.6)', strokeStyle: '#4dff9e', shadowColor: '#4dff9e' });
   activeMenuButtons.push({ x: btnX, y: btnY, width: btnWidth, height: btnHeight, action: 'CONFIRM' });
 
   ctx.font = `${Math.round(canvas.width * 0.012)}px 'Orbitron', monospace`;
   ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-  ctx.fillText('Press ENTER to Confirm', canvas.width / 2, canvas.height * 0.84);
+  ctx.fillText('Press ENTER to Confirm', canvas.width / 2, canvas.height * 0.78);
 
   ctx.restore();
 }
