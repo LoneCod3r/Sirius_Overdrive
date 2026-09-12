@@ -27,15 +27,23 @@ body {
 /* Invisible but real/focusable text input that game.js focuses while
    gameState is 'ENTER_NAME' - this is what makes the name typeable on
    mobile (focusing it pops the OS's own keyboard) as well as desktop.
-   The canvas draws the name itself; this element is never seen. */
+   The canvas draws the name itself; this element is never seen.
+   Deliberately kept INSIDE the visible viewport (not off-screen at a
+   negative position) at a real, non-zero size - many mobile browsers
+   (confirmed on a Cubot King Kong; likely others) silently refuse to
+   raise the on-screen keyboard for a focused input positioned off-screen,
+   as an anti-abuse heuristic, which made name entry a dead tap on those
+   devices even though the input itself focused fine. */
 #nameInput {
   position: fixed;
-  top: -1000px;
-  left: -1000px;
-  width: 1px;
-  height: 1px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 200px;
+  height: 40px;
   opacity: 0;
   border: none;
+  pointer-events: none;
 }
 
 /* Shown (via game.js, toggling the [hidden] attribute) on touch devices
